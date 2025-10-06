@@ -3,6 +3,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
 use std::collections::HashSet;
 use std::fs;
+use std::os::unix::fs as unix_fs;
 use std::path::Path;
 use walkdir::WalkDir;
 
@@ -25,10 +26,10 @@ fn main() {
 
     println!("Backing up from '{}' → '{}'", src, dst);
 
-    // Collect files and directories in one pass
     let mut files = Vec::new();
     let mut dirs = HashSet::new();
 
+    // Walk directory tree
     for entry in WalkDir::new(&src).into_iter().filter_map(|e| e.ok()) {
         let path = entry.path();
 
@@ -39,18 +40,18 @@ fn main() {
             }
         }
 
-        if entry.file_type().is_file() {
+        if entry.file_type().is_file() || entry.file_type().is_symlink() {
             files.push(path.to_path_buf());
         } else if entry.file_type().is_dir() {
             dirs.insert(path.to_path_buf());
         }
     }
 
-    // Sort directories by depth ascending to create parents first
+    // Sort dirs by depth
     let mut dirs: Vec<_> = dirs.into_iter().collect();
     dirs.sort_by_key(|d| d.components().count());
 
-    // Create all directories in parallel
+    // Create dirs in parallel
     dirs.par_iter().for_each(|dir| {
         let relative = dir.strip_prefix(&src).unwrap();
         let dest_path = Path::new(&dst).join(relative);
@@ -67,13 +68,23 @@ fn main() {
         .progress_chars("#>-"),
     );
 
-    // Parallel copy files
+    // Copy files + symlinks
     files.par_iter().for_each(|file| {
         let relative = file.strip_prefix(&src).unwrap();
         let dest_path = Path::new(&dst).join(relative);
 
-        if let Err(err) = fs::copy(file, &dest_path) {
-            eprintln!("Failed to copy {}: {}", file.display(), err);
+        if let Ok(metadata) = fs::symlink_metadata(file) {
+            if metadata.file_type().is_symlink() {
+                // Preserve symlink target
+                if let Ok(target) = fs::read_link(file) {
+                    let _ = unix_fs::symlink(&target, &dest_path);
+                }
+            } else {
+                // Normal file copy
+                if let Err(err) = fs::copy(file, &dest_path) {
+                    eprintln!("Failed to copy {}: {}", file.display(), err);
+                }
+            }
         }
 
         pb.inc(1);
