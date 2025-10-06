@@ -1,5 +1,5 @@
 # fast-copy
-
+Copy **_large file / folder_** can be a big pain if we are using **cp** command, this utility help process copying file in parallel
 
 ## Usage
 `cargo run --release -- "COPY_SOURCE_PATH" "DESTINATION_PATH"`
